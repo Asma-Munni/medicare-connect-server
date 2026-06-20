@@ -541,6 +541,71 @@ app.patch("/appointments/:id/status", async (req, res) => {
       });
     });
 
+
+  // Update user role/status by admin
+app.patch("/users/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { role, status } = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid user ID",
+      });
+    }
+
+    const updateData = {
+      updatedAt: new Date(),
+    };
+
+    if (role) {
+      const allowedRoles = ["patient", "doctor", "admin"];
+
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid user role",
+        });
+      }
+
+      updateData.role = role;
+    }
+
+    if (status) {
+      const allowedStatus = ["active", "blocked"];
+
+      if (!allowedStatus.includes(status)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid user status",
+        });
+      }
+
+      updateData.status = status;
+    }
+
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: updateData,
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "User updated successfully",
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to update user",
+      error: error.message,
+    });
+  }
+});  
+
    
 
     // Get verified doctors only
