@@ -316,7 +316,7 @@ app.patch("/doctors/:id", async (req, res) => {
 });
 
 
-// Admin: update doctor verification status
+// Update doctor verification status by admin
 app.patch("/doctors/:id/verification", async (req, res) => {
   try {
     const id = req.params.id;
@@ -329,7 +329,9 @@ app.patch("/doctors/:id/verification", async (req, res) => {
       });
     }
 
-    if (!["pending", "verified", "rejected"].includes(verificationStatus)) {
+    const allowedStatus = ["pending", "verified", "rejected"];
+
+    if (!allowedStatus.includes(verificationStatus)) {
       return res.status(400).send({
         success: false,
         message: "Invalid verification status",
@@ -348,13 +350,13 @@ app.patch("/doctors/:id/verification", async (req, res) => {
 
     res.send({
       success: true,
-      message: "Doctor verification status updated",
+      message: "Doctor verification status updated successfully",
       data: result,
     });
   } catch (error) {
     res.status(500).send({
       success: false,
-      message: "Failed to update verification status",
+      message: "Failed to update doctor verification status",
       error: error.message,
     });
   }
