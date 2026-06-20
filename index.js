@@ -434,6 +434,30 @@ app.post("/appointments", async (req, res) => {
   }
 });
 
+
+
+// Get all appointments by admin
+app.get("/appointments", async (req, res) => {
+  try {
+    const appointments = await appointmentsCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: appointments,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get appointments",
+      error: error.message,
+    });
+  }
+});
+
+
 // Get patient appointments by patientId
 app.get("/appointments/patient/:patientId", async (req, res) => {
   try {
@@ -560,7 +584,7 @@ app.patch("/users/:id", async (req, res) => {
     };
 
     if (role) {
-      const allowedRoles = ["patient", "doctor", "admin"];
+      const allowedRoles = ["patient", "doctor"];
 
       if (!allowedRoles.includes(role)) {
         return res.status(400).send({
