@@ -534,6 +534,191 @@ app.patch("/appointments/:id/status", async (req, res) => {
 });
 
 
+// Create review
+app.post("/reviews", async (req, res) => {
+  try {
+    const { appointmentId, patientId, rating, comment } = req.body;
+
+    if (!appointmentId || !patientId || !rating || !comment) {
+      return res.status(400).send({
+        success: false,
+        message: "Appointment ID, patient ID, rating, and comment are required.",
+      });
+    }
+
+    const numericRating = Number(rating);
+
+    if (numericRating < 1 || numericRating > 5) {
+      return res.status(400).send({
+        success: false,
+        message: "Rating must be between 1 and 5.",
+      });
+    }
+
+    const appointment = await appointmentsCollection.findOne({
+      _id: new ObjectId(appointmentId),
+    });
+
+    if (!appointment) {
+      return res.status(404).send({
+        success: false,
+        message: "Appointment not found.",
+      });
+    }
+
+    if (appointment.patientId !== patientId) {
+      return res.status(403).send({
+        success: false,
+        message: "You can only review your own appointment.",
+      });
+    }
+
+    if (appointment.appointmentStatus !== "completed") {
+      return res.status(400).send({
+        success: false,
+        message: "You can review only after the appointment is completed.",
+      });
+    }
+
+    const existingReview = await reviewsCollection.findOne({
+      appointmentId,
+      patientId,
+    });
+
+    if (existingReview) {
+      return res.status(409).send({
+        success: false,
+        message: "You have already reviewed this appointment.",
+      });
+    }
+
+    const review = {
+      appointmentId,
+      doctorId: appointment.doctorId,
+      doctorName: appointment.doctorName,
+      doctorEmail: appointment.doctorEmail,
+      patientId,
+      patientName: appointment.patientName,
+      patientEmail: appointment.patientEmail,
+      rating: numericRating,
+      comment,
+      createdAt: new Date(),
+    };
+
+    const result = await reviewsCollection.insertOne(review);
+
+    const doctorReviews = await reviewsCollection
+      .find({ doctorId: appointment.doctorId })
+      .toArray();
+
+    const totalReviews = doctorReviews.length;
+
+    const averageRating =
+      doctorReviews.reduce((sum, item) => sum + Number(item.rating || 0), 0) /
+      totalReviews;
+
+    await doctorsCollection.updateOne(
+      { _id: new ObjectId(appointment.doctorId) },
+      {
+        $set: {
+          rating: Number(averageRating.toFixed(1)),
+          averageRating: Number(averageRating.toFixed(1)),
+          totalReviews,
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Review submitted successfully.",
+      data: {
+        _id: result.insertedId,
+        ...review,
+      },
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to submit review.",
+      error: error.message,
+    });
+  }
+});
+
+
+// Get latest reviews
+app.get("/reviews", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 6;
+
+    const reviews = await reviewsCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray();
+
+    res.send({
+      success: true,
+      data: reviews,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get latest reviews.",
+      error: error.message,
+    });
+  }
+});
+
+// Get reviews by doctor ID
+app.get("/reviews/doctor/:doctorId", async (req, res) => {
+  try {
+    const doctorId = req.params.doctorId;
+
+    const reviews = await reviewsCollection
+      .find({ doctorId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: reviews,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get doctor reviews.",
+      error: error.message,
+    });
+  }
+});
+
+// Get reviews by patient ID
+app.get("/reviews/patient/:patientId", async (req, res) => {
+  try {
+    const patientId = req.params.patientId;
+
+    const reviews = await reviewsCollection
+      .find({ patientId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: reviews,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get patient reviews.",
+      error: error.message,
+    });
+  }
+});
+
+
+
+
 
     // Health check
     app.get("/health", (req, res) => {
@@ -646,29 +831,97 @@ app.patch("/users/:id", async (req, res) => {
 
     
 
-    
-
-    // Platform statistics
-    app.get("/stats", async (req, res) => {
-      const totalUsers = await usersCollection.countDocuments();
-      const totalDoctors = await doctorsCollection.countDocuments();
-      const totalPatients = await usersCollection.countDocuments({
-        role: "patient",
-      });
-      const totalAppointments = await appointmentsCollection.countDocuments();
-      const totalReviews = await reviewsCollection.countDocuments();
-
-      res.send({
-        success: true,
-        data: {
-          totalUsers,
-          totalDoctors,
-          totalPatients,
-          totalAppointments,
-          totalReviews,
-        },
-      });
+   // Dashboard statistics
+app.get("/stats", async (req, res) => {
+  try {
+    const totalUsers = await usersCollection.countDocuments();
+    const totalPatients = await usersCollection.countDocuments({
+      role: "patient",
     });
+    const totalUserDoctors = await usersCollection.countDocuments({
+      role: "doctor",
+    });
+    const totalAdmins = await usersCollection.countDocuments({
+      role: "admin",
+    });
+
+    const totalDoctors = await doctorsCollection.countDocuments();
+    const verifiedDoctors = await doctorsCollection.countDocuments({
+      verificationStatus: "verified",
+    });
+    const pendingDoctors = await doctorsCollection.countDocuments({
+      verificationStatus: "pending",
+    });
+    const rejectedDoctors = await doctorsCollection.countDocuments({
+      verificationStatus: "rejected",
+    });
+
+    const totalAppointments = await appointmentsCollection.countDocuments();
+    const pendingAppointments = await appointmentsCollection.countDocuments({
+      appointmentStatus: "pending",
+    });
+    const acceptedAppointments = await appointmentsCollection.countDocuments({
+      appointmentStatus: "accepted",
+    });
+    const rejectedAppointments = await appointmentsCollection.countDocuments({
+      appointmentStatus: "rejected",
+    });
+    const completedAppointments = await appointmentsCollection.countDocuments({
+      appointmentStatus: "completed",
+    });
+    const cancelledAppointments = await appointmentsCollection.countDocuments({
+      appointmentStatus: "cancelled",
+    });
+
+    const paidAppointments = await appointmentsCollection.countDocuments({
+      paymentStatus: "paid",
+    });
+    const unpaidAppointments = await appointmentsCollection.countDocuments({
+      paymentStatus: "unpaid",
+    });
+
+    const totalPayments = await paymentsCollection.countDocuments();
+
+    res.send({
+      success: true,
+      data: {
+        users: {
+          totalUsers,
+          totalPatients,
+          totalUserDoctors,
+          totalAdmins,
+        },
+        doctors: {
+          totalDoctors,
+          verifiedDoctors,
+          pendingDoctors,
+          rejectedDoctors,
+        },
+        appointments: {
+          totalAppointments,
+          pendingAppointments,
+          acceptedAppointments,
+          rejectedAppointments,
+          completedAppointments,
+          cancelledAppointments,
+        },
+        payments: {
+          totalPayments,
+          paidAppointments,
+          unpaidAppointments,
+        },
+      },
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get dashboard statistics",
+      error: error.message,
+    });
+  }
+}); 
+
+   
   
 
 
