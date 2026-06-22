@@ -1359,6 +1359,67 @@ app.patch("/users/:id", async (req, res) => {
   }
 });  
 
+// Update user profile
+app.patch("/users/:id/profile", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { name, image, phone, address } = req.body;
+
+    if (!id) {
+      return res.status(400).send({
+        success: false,
+        message: "User ID is required.",
+      });
+    }
+
+    const updateData = {
+      updatedAt: new Date(),
+    };
+
+    if (name !== undefined) updateData.name = name;
+    if (image !== undefined) updateData.image = image;
+    if (phone !== undefined) updateData.phone = phone;
+    if (address !== undefined) updateData.address = address;
+
+    const result = await usersCollection.updateOne(
+      { id },
+      {
+        $set: updateData,
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      const objectIdResult = ObjectId.isValid(id)
+        ? await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: updateData,
+            }
+          )
+        : null;
+
+      if (!objectIdResult || objectIdResult.matchedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "User not found.",
+        });
+      }
+    }
+
+    res.send({
+      success: true,
+      message: "Profile updated successfully.",
+      data: updateData,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to update profile.",
+      error: error.message,
+    });
+  }
+});
+
    
 
     // Get verified doctors only
