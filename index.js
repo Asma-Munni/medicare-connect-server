@@ -988,6 +988,219 @@ app.get("/payments/patient/:patientId", async (req, res) => {
 
 
 
+// Create prescription
+app.post("/prescriptions", async (req, res) => {
+  try {
+    const {
+      appointmentId,
+      doctorId,
+      diagnosis,
+      medicines,
+      advice,
+      followUpDate,
+    } = req.body;
+
+    if (!appointmentId || !doctorId || !diagnosis || !medicines?.length) {
+      return res.status(400).send({
+        success: false,
+        message:
+          "Appointment ID, doctor ID, diagnosis, and medicines are required.",
+      });
+    }
+
+    const appointment = await appointmentsCollection.findOne({
+      _id: new ObjectId(appointmentId),
+    });
+
+    if (!appointment) {
+      return res.status(404).send({
+        success: false,
+        message: "Appointment not found.",
+      });
+    }
+
+    if (appointment.doctorId !== doctorId) {
+      return res.status(403).send({
+        success: false,
+        message: "You can only create prescription for your own appointment.",
+      });
+    }
+
+    if (appointment.appointmentStatus !== "completed") {
+      return res.status(400).send({
+        success: false,
+        message: "Prescription can be created only after appointment is completed.",
+      });
+    }
+
+    const existingPrescription = await prescriptionsCollection.findOne({
+      appointmentId,
+    });
+
+    if (existingPrescription) {
+      return res.status(409).send({
+        success: false,
+        message: "Prescription already exists for this appointment.",
+      });
+    }
+
+    const prescription = {
+      appointmentId,
+      doctorId,
+      doctorName: appointment.doctorName,
+      doctorEmail: appointment.doctorEmail,
+      patientId: appointment.patientId,
+      patientName: appointment.patientName,
+      patientEmail: appointment.patientEmail,
+      appointmentDate: appointment.appointmentDate,
+      appointmentTime: appointment.appointmentTime,
+      symptoms: appointment.symptoms || "",
+      diagnosis,
+      medicines,
+      advice: advice || "",
+      followUpDate: followUpDate || "",
+      createdAt: new Date(),
+    };
+
+    const result = await prescriptionsCollection.insertOne(prescription);
+
+    await appointmentsCollection.updateOne(
+      { _id: new ObjectId(appointmentId) },
+      {
+        $set: {
+          prescriptionStatus: "created",
+          prescriptionId: result.insertedId.toString(),
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Prescription created successfully.",
+      data: {
+        _id: result.insertedId,
+        ...prescription,
+      },
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to create prescription.",
+      error: error.message,
+    });
+  }
+});
+
+// Get prescriptions by patient ID
+app.get("/prescriptions/patient/:patientId", async (req, res) => {
+  try {
+    const patientId = req.params.patientId;
+
+    const prescriptions = await prescriptionsCollection
+      .find({ patientId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: prescriptions,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get patient prescriptions.",
+      error: error.message,
+    });
+  }
+});
+
+// Get prescriptions by doctor ID
+app.get("/prescriptions/doctor/:doctorId", async (req, res) => {
+  try {
+    const doctorId = req.params.doctorId;
+
+    const prescriptions = await prescriptionsCollection
+      .find({ doctorId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: prescriptions,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get doctor prescriptions.",
+      error: error.message,
+    });
+  }
+});
+
+
+
+
+// Get prescription by appointment ID
+app.get("/prescriptions/appointment/:appointmentId", async (req, res) => {
+  try {
+    const appointmentId = req.params.appointmentId;
+
+    const prescription = await prescriptionsCollection.findOne({
+      appointmentId,
+    });
+
+    res.send({
+      success: true,
+      data: prescription,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get appointment prescription.",
+      error: error.message,
+    });
+  }
+});
+
+
+// Get single prescription by ID
+app.get("/prescriptions/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid prescription ID.",
+      });
+    }
+
+    const prescription = await prescriptionsCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!prescription) {
+      return res.status(404).send({
+        success: false,
+        message: "Prescription not found.",
+      });
+    }
+
+    res.send({
+      success: true,
+      data: prescription,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get prescription.",
+      error: error.message,
+    });
+  }
+});
+
+
+
 
 
 
