@@ -1,11 +1,21 @@
-const express = require('express')
-const cors = require('cors');
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const app = express()
+require("dotenv").config();
+
+const express = require("express");
+const cors = require("cors");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+
+console.log("Stripe key loaded:", !!stripeSecretKey);
+
+const stripe = stripeSecretKey ? require("stripe")(stripeSecretKey) : null;
+
+const app = express();
 const port = process.env.PORT || 5000;
-require('dotenv').config();
+
 app.use(cors());
 app.use(express.json());
+
 
 app.get('/', (req, res) => {
   res.send('MediCare Connect Server is Running')
@@ -715,6 +725,270 @@ app.get("/reviews/patient/:patientId", async (req, res) => {
     });
   }
 });
+
+
+// Create Stripe checkout session
+app.post("/create-payment-session", async (req, res) => {
+  try {
+    const { appointmentId, patientId } = req.body;
+
+    if (!appointmentId || !patientId) {
+      return res.status(400).send({
+        success: false,
+        message: "Appointment ID and patient ID are required.",
+      });
+    }
+
+    const appointment = await appointmentsCollection.findOne({
+      _id: new ObjectId(appointmentId),
+    });
+
+    if (!appointment) {
+      return res.status(404).send({
+        success: false,
+        message: "Appointment not found.",
+      });
+    }
+
+    if (appointment.patientId !== patientId) {
+      return res.status(403).send({
+        success: false,
+        message: "You can only pay for your own appointment.",
+      });
+    }
+
+    if (appointment.paymentStatus === "paid") {
+      return res.status(409).send({
+        success: false,
+        message: "This appointment is already paid.",
+      });
+    }
+
+    const amount = Number(appointment.consultationFee || 0);
+
+    if (amount <= 0) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid consultation fee.",
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      customer_email: appointment.patientEmail,
+      line_items: [
+        {
+          price_data: {
+            currency: "bdt",
+            product_data: {
+              name: `Appointment with ${appointment.doctorName}`,
+              description: `Appointment date: ${appointment.appointmentDate}, time: ${appointment.appointmentTime}`,
+            },
+            unit_amount: amount * 100,
+          },
+          quantity: 1,
+        },
+      ],
+      metadata: {
+        appointmentId: appointment._id.toString(),
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId,
+      },
+      success_url: `${process.env.CLIENT_URL}/dashboard/patient/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL}/dashboard/patient/appointments`,
+    });
+
+    res.send({
+      success: true,
+      message: "Stripe checkout session created successfully.",
+      url: session.url,
+      sessionId: session.id,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to create Stripe checkout session.",
+      error: error.message,
+    });
+  }
+});
+
+
+// Verify Stripe payment and save payment record
+app.get("/confirm-payment", async (req, res) => {
+  try {
+    const sessionId = req.query.session_id;
+
+    if (!sessionId) {
+      return res.status(400).send({
+        success: false,
+        message: "Stripe session ID is required.",
+      });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (!session) {
+      return res.status(404).send({
+        success: false,
+        message: "Stripe session not found.",
+      });
+    }
+
+    if (session.payment_status !== "paid") {
+      return res.status(400).send({
+        success: false,
+        message: "Payment is not completed yet.",
+        paymentStatus: session.payment_status,
+      });
+    }
+
+    const appointmentId = session.metadata?.appointmentId;
+    const patientId = session.metadata?.patientId;
+
+    if (!appointmentId || !patientId) {
+      return res.status(400).send({
+        success: false,
+        message: "Payment metadata is missing.",
+      });
+    }
+
+    const appointment = await appointmentsCollection.findOne({
+      _id: new ObjectId(appointmentId),
+    });
+
+    if (!appointment) {
+      return res.status(404).send({
+        success: false,
+        message: "Appointment not found.",
+      });
+    }
+
+    if (appointment.paymentStatus === "paid") {
+      const existingPayment = await paymentsCollection.findOne({
+        appointmentId,
+        patientId,
+      });
+
+      return res.send({
+        success: true,
+        message: "Payment already confirmed.",
+        data: existingPayment,
+      });
+    }
+
+    const existingPayment = await paymentsCollection.findOne({
+      stripeSessionId: session.id,
+    });
+
+    if (existingPayment) {
+      return res.send({
+        success: true,
+        message: "Payment already saved.",
+        data: existingPayment,
+      });
+    }
+
+    const payment = {
+      appointmentId,
+      patientId,
+      patientName: appointment.patientName,
+      patientEmail: appointment.patientEmail,
+      doctorId: appointment.doctorId,
+      doctorName: appointment.doctorName,
+      doctorEmail: appointment.doctorEmail,
+      amount: Number(session.amount_total || 0) / 100,
+      currency: session.currency,
+      paymentMethod: "Stripe",
+      paymentStatus: "paid",
+      stripeSessionId: session.id,
+      transactionId:
+        typeof session.payment_intent === "string"
+          ? session.payment_intent
+          : session.id,
+      paidAt: new Date(),
+      createdAt: new Date(),
+    };
+
+    const result = await paymentsCollection.insertOne(payment);
+
+    await appointmentsCollection.updateOne(
+      { _id: new ObjectId(appointmentId) },
+      {
+        $set: {
+          paymentStatus: "paid",
+          paymentId: result.insertedId.toString(),
+          paidAt: new Date(),
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Payment confirmed successfully.",
+      data: {
+        _id: result.insertedId,
+        ...payment,
+      },
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to confirm payment.",
+      error: error.message,
+    });
+  }
+});
+
+
+// Get all payments for admin
+app.get("/payments", async (req, res) => {
+  try {
+    const payments = await paymentsCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: payments,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get payments.",
+      error: error.message,
+    });
+  }
+});
+
+// Get payments by patient ID
+app.get("/payments/patient/:patientId", async (req, res) => {
+  try {
+    const patientId = req.params.patientId;
+
+    const payments = await paymentsCollection
+      .find({ patientId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: payments,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get patient payments.",
+      error: error.message,
+    });
+  }
+});
+
+
+
+
 
 
 
