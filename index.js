@@ -994,14 +994,7 @@ app.get("/payments/patient/:patientId", async (req, res) => {
 
 
 
-    // Health check
-    app.get("/health", (req, res) => {
-      res.send({
-        success: true,
-        message: "Server health is good",
-      });
-    });
-
+    
     // Get all users
     app.get("/users", async (req, res) => {
       const users = await usersCollection.find().toArray();
