@@ -211,6 +211,70 @@ app.get("/doctors/email/:email", async (req, res) => {
 });
 
 
+// Update doctor schedule
+app.patch("/doctors/:id/schedule", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { availableDays, availableSlots } = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid doctor ID.",
+      });
+    }
+
+    if (!Array.isArray(availableDays) || !Array.isArray(availableSlots)) {
+      return res.status(400).send({
+        success: false,
+        message: "Available days and available slots must be arrays.",
+      });
+    }
+
+    if (availableDays.length === 0 || availableSlots.length === 0) {
+      return res.status(400).send({
+        success: false,
+        message: "Please select at least one day and one slot.",
+      });
+    }
+
+    const result = await doctorsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          availableDays,
+          availableSlots,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "Doctor not found.",
+      });
+    }
+
+    res.send({
+      success: true,
+      message: "Doctor schedule updated successfully.",
+      data: {
+        _id: id,
+        availableDays,
+        availableSlots,
+      },
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to update doctor schedule.",
+      error: error.message,
+    });
+  }
+});
+
+
 
 // Get single doctor by ID
 app.get("/doctors/:id", async (req, res) => {
