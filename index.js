@@ -2,6 +2,8 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+
+
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
@@ -15,6 +17,9 @@ const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+
+
 
 
 app.get('/', (req, res) => {
@@ -50,6 +55,80 @@ async function run() {
     const reviewsCollection = db.collection("reviews");
     const paymentsCollection = db.collection("payments");
     const prescriptionsCollection = db.collection("prescriptions");
+    const sessionCollection = db.collection("session");
+
+
+// Verification Related
+
+const verifyToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers?.authorization;
+
+    if (!authHeader) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    if (!token) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
+
+    const session = await sessionCollection.findOne({ token });
+
+    if (!session) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
+
+    let user = await usersCollection.findOne({ id: session.userId });
+
+    if (!user && ObjectId.isValid(session.userId)) {
+      user = await usersCollection.findOne({
+        _id: new ObjectId(session.userId),
+      });
+    }
+
+    if (!user) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
+
+    req.user = user;
+
+    next();
+  } catch (error) {
+    res.status(500).send({
+      message: "failed to verify token",
+      error: error.message,
+    });
+  }
+};
+
+
+//must be used after verifyToken middleware
+const verifyDoctor = async(req, res, next) =>{
+  if(req.user?.role !== 'doctor'){
+    return res.status(403).send({message: 'forbidden access'}) 
+  }
+  next();
+}
+
+//must be used after verifyToken middleware
+const verifyPatient = async(req, res, next) =>{
+  if(req.user?.role !== 'patient'){
+    return res.status(403).send({message: 'forbidden access'}) 
+  }
+  next();
+}
+
+
+
+//must be used after verifyToken middleware
+const verifyAdmin = async(req, res, next) =>{
+  if(req.user?.role !== 'admin'){
+    return res.status(403).send({message: 'forbidden access'}) 
+  }
+  next();
+}
 
 
     // Create doctor profile
@@ -315,7 +394,7 @@ app.get("/doctors/:id", async (req, res) => {
 
 
 // Get doctor appointments by doctorId
-app.get("/appointments/doctor/:doctorId", async (req, res) => {
+app.get("/appointments/doctor/:doctorId",verifyToken, verifyDoctor, async (req, res) => {
   try {
     const doctorId = req.params.doctorId;
 
@@ -391,7 +470,7 @@ app.patch("/doctors/:id", async (req, res) => {
 
 
 // Update doctor verification status by admin
-app.patch("/doctors/:id/verification", async (req, res) => {
+app.patch("/doctors/:id/verification",verifyToken, verifyAdmin, async (req, res) => {
   try {
     const id = req.params.id;
     const { verificationStatus } = req.body;
@@ -511,7 +590,7 @@ app.post("/appointments", async (req, res) => {
 
 
 // Get all appointments by admin
-app.get("/appointments", async (req, res) => {
+app.get("/appointments",verifyToken, verifyAdmin, async (req, res) => {
   try {
     const appointments = await appointmentsCollection
       .find()
@@ -533,7 +612,7 @@ app.get("/appointments", async (req, res) => {
 
 
 // Get patient appointments by patientId
-app.get("/appointments/patient/:patientId", async (req, res) => {
+app.get("/appointments/patient/:patientId",verifyToken, verifyPatient, async (req, res) => {
   try {
     const patientId = req.params.patientId;
 
@@ -556,7 +635,7 @@ app.get("/appointments/patient/:patientId", async (req, res) => {
 });
 
 // Update appointment status
-app.patch("/appointments/:id/status", async (req, res) => {
+app.patch("/appointments/:id/status",verifyToken,  async (req, res) => {
   try {
     const id = req.params.id;
     const { appointmentStatus } = req.body;
@@ -580,6 +659,53 @@ app.patch("/appointments/:id/status", async (req, res) => {
       return res.status(400).send({
         success: false,
         message: "Invalid appointment status",
+      });
+    }
+
+    const appointment = await appointmentsCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!appointment) {
+      return res.status(404).send({
+        success: false,
+        message: "Appointment not found",
+      });
+    }
+
+    const role = req.user?.role;
+    const userEmail = req.user?.email;
+
+    const isAdmin = role === "admin";
+
+    const isDoctorOwner =
+      role === "doctor" && appointment.doctorEmail === userEmail;
+
+    const isPatientOwner =
+      role === "patient" && appointment.patientEmail === userEmail;
+
+    if (isAdmin) {
+      // Admin can update any appointment status
+    } else if (isDoctorOwner) {
+      const doctorAllowedStatus = ["accepted", "rejected", "completed"];
+
+      if (!doctorAllowedStatus.includes(appointmentStatus)) {
+        return res.status(403).send({
+          success: false,
+          message: "Doctor can only accept, reject, or complete appointments",
+        });
+      }
+    } else if (isPatientOwner) {
+      if (appointmentStatus !== "cancelled") {
+        return res.status(403).send({
+          success: false,
+          message: "Patient can only cancel own appointment",
+        });
+      }
+    } else {
+      return res.status(403).send({
+        success: false,
+        message: "forbidden access",
       });
     }
 
@@ -1007,7 +1133,7 @@ app.get("/confirm-payment", async (req, res) => {
 
 
 // Get all payments for admin
-app.get("/payments", async (req, res) => {
+app.get("/payments",verifyToken, verifyAdmin, async (req, res) => {
   try {
     const payments = await paymentsCollection
       .find()
@@ -1028,7 +1154,7 @@ app.get("/payments", async (req, res) => {
 });
 
 // Get payments by patient ID
-app.get("/payments/patient/:patientId", async (req, res) => {
+app.get("/payments/patient/:patientId",verifyToken, verifyPatient, async (req, res) => {
   try {
     const patientId = req.params.patientId;
 
@@ -1156,7 +1282,7 @@ app.post("/prescriptions", async (req, res) => {
 });
 
 // Get prescriptions by patient ID
-app.get("/prescriptions/patient/:patientId", async (req, res) => {
+app.get("/prescriptions/patient/:patientId",verifyPatient, async (req, res) => {
   try {
     const patientId = req.params.patientId;
 
@@ -1228,7 +1354,7 @@ app.get("/prescriptions/appointment/:appointmentId", async (req, res) => {
 
 
 // Get single prescription by ID
-app.get("/prescriptions/:id", async (req, res) => {
+app.get("/prescriptions/:id",verifyToken, async (req, res) => {
   try {
     const id = req.params.id;
 
@@ -1273,7 +1399,7 @@ app.get("/prescriptions/:id", async (req, res) => {
 
     
     // Get all users
-    app.get("/users", async (req, res) => {
+    app.get("/users",verifyToken, verifyAdmin, async (req, res) => {
       const users = await usersCollection.find().toArray();
 
       res.send({
@@ -1296,7 +1422,7 @@ app.get("/prescriptions/:id", async (req, res) => {
 
 
   // Update user role/status by admin
-app.patch("/users/:id", async (req, res) => {
+app.patch("/users/:id",verifyToken, verifyAdmin, async (req, res) => {
   try {
     const id = req.params.id;
     const { role, status } = req.body;
@@ -1437,7 +1563,7 @@ app.patch("/users/:id/profile", async (req, res) => {
     
 
    // Dashboard statistics
-app.get("/stats", async (req, res) => {
+app.get("/stats",verifyToken, verifyAdmin, async (req, res) => {
   try {
     const totalUsers = await usersCollection.countDocuments();
     const totalPatients = await usersCollection.countDocuments({
