@@ -63,6 +63,7 @@ async function run() {
 const verifyToken = async (req, res, next) => {
   try {
     const authHeader = req.headers?.authorization;
+    console.log(authHeader);
 
     if (!authHeader) {
       return res.status(401).send({ message: "unauthorized access" });
@@ -114,6 +115,7 @@ const verifyDoctor = async(req, res, next) =>{
 
 //must be used after verifyToken middleware
 const verifyPatient = async(req, res, next) =>{
+  console.log(req.user?.role);
   if(req.user?.role !== 'patient'){
     return res.status(403).send({message: 'forbidden access'}) 
   }
@@ -894,7 +896,7 @@ app.get("/reviews/doctor/:doctorId", async (req, res) => {
 });
 
 // Get reviews by patient ID
-app.get("/reviews/patient/:patientId", async (req, res) => {
+app.get("/reviews/patient/:patientId",verifyToken,verifyPatient, async (req, res) => {
   try {
     const patientId = req.params.patientId;
 
@@ -1282,7 +1284,7 @@ app.post("/prescriptions", async (req, res) => {
 });
 
 // Get prescriptions by patient ID
-app.get("/prescriptions/patient/:patientId",verifyPatient, async (req, res) => {
+app.get("/prescriptions/patient/:patientId",verifyToken,verifyPatient, async (req, res) => {
   try {
     const patientId = req.params.patientId;
 
