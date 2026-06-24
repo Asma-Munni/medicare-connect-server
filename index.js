@@ -58,6 +58,40 @@ async function run() {
     const sessionCollection = db.collection("session");
 
 
+    // Public home page statistics
+app.get("/home-stats", async (req, res) => {
+  try {
+    const totalDoctors = await doctorsCollection.countDocuments({
+      verificationStatus: "verified",
+    });
+
+    const totalPatients = await usersCollection.countDocuments({
+      role: "patient",
+    });
+
+    const totalAppointments = await appointmentsCollection.countDocuments();
+
+    const totalReviews = await reviewsCollection.countDocuments();
+
+    res.send({
+      success: true,
+      data: {
+        totalDoctors,
+        totalPatients,
+        totalAppointments,
+        totalReviews,
+      },
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to load home statistics",
+      error: error.message,
+    });
+  }
+});
+
+
 // Verification Related
 
 const verifyToken = async (req, res, next) => {
