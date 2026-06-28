@@ -168,7 +168,7 @@ const verifyAdmin = async(req, res, next) =>{
 
 
     // Create doctor profile
-app.post("/doctors", async (req, res) => {
+app.post("/doctors",verifyToken, async (req, res) => {
   try {
     const doctorData = req.body;
 
@@ -506,24 +506,17 @@ app.patch("/doctors/:id", async (req, res) => {
 
 
 // Update doctor verification status by admin
-app.patch("/doctors/:id/verification",verifyToken, verifyAdmin, async (req, res) => {
+app.patch("/doctors/:id/verification", verifyToken, verifyAdmin, async (req, res) => {
   try {
     const id = req.params.id;
     const { verificationStatus } = req.body;
 
-    if (!ObjectId.isValid(id)) {
+    const allowed = ["verified", "rejected", "pending"];
+
+    if (!allowed.includes(verificationStatus)) {
       return res.status(400).send({
         success: false,
-        message: "Invalid doctor ID",
-      });
-    }
-
-    const allowedStatus = ["pending", "verified", "rejected"];
-
-    if (!allowedStatus.includes(verificationStatus)) {
-      return res.status(400).send({
-        success: false,
-        message: "Invalid verification status",
+        message: "Invalid status",
       });
     }
 
@@ -539,14 +532,12 @@ app.patch("/doctors/:id/verification",verifyToken, verifyAdmin, async (req, res)
 
     res.send({
       success: true,
-      message: "Doctor verification status updated successfully",
-      data: result,
+      message: `Doctor ${verificationStatus} successfully`,
     });
   } catch (error) {
     res.status(500).send({
       success: false,
-      message: "Failed to update doctor verification status",
-      error: error.message,
+      message: "Server error",
     });
   }
 });
@@ -1420,6 +1411,69 @@ app.get("/prescriptions/:id",verifyToken, async (req, res) => {
     res.status(500).send({
       success: false,
       message: "Failed to get prescription.",
+      error: error.message,
+    });
+  }
+});
+
+//get doctors pending for verify
+app.get("/admin/doctors/pending", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const doctors = await doctorsCollection
+      .find({ verificationStatus: "pending" })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: doctors,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to get pending doctors",
+      error: error.message,
+    });
+  }
+});
+
+//admin verify or reject doctor
+app.patch("/admin/doctors/:id/verify", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body; // "verified" | "rejected"
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ success: false, message: "Invalid doctor ID" });
+    }
+
+    const allowed = ["verified", "rejected"];
+
+    if (!allowed.includes(status)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid status",
+      });
+    }
+
+    const result = await doctorsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          verificationStatus: status,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: `Doctor ${status} successfully`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to update verification",
       error: error.message,
     });
   }
