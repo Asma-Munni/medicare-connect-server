@@ -168,13 +168,20 @@ const verifyAdmin = async(req, res, next) =>{
 
 
     // Create doctor profile
-app.post("/doctors",verifyToken, async (req, res) => {
+app.post("/doctors", verifyToken, async (req, res) => {
   try {
     const doctorData = req.body;
 
-    const existingDoctor = await doctorsCollection.findOne({
-      email: doctorData.email,
-    });
+    const email = req.user?.email;
+
+    if (!email) {
+      return res.status(401).send({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const existingDoctor = await doctorsCollection.findOne({ email });
 
     if (existingDoctor) {
       return res.status(409).send({
@@ -184,16 +191,20 @@ app.post("/doctors",verifyToken, async (req, res) => {
     }
 
     const newDoctor = {
+      doctorId: `DOC-${Date.now()}`, // 🔥 FIXED
       doctorName: doctorData.doctorName,
-      email: doctorData.email,
+      email,
       specialization: doctorData.specialization,
       qualifications: doctorData.qualifications,
       experience: Number(doctorData.experience) || 0,
       consultationFee: Number(doctorData.consultationFee) || 0,
       hospitalName: doctorData.hospitalName,
       profileImage: doctorData.profileImage,
+
+      // 🔥 IMPORTANT FIX (fallback safe)
       availableDays: doctorData.availableDays || [],
       availableSlots: doctorData.availableSlots || [],
+
       verificationStatus: "pending",
       averageRating: 0,
       totalReviews: 0,
@@ -207,11 +218,11 @@ app.post("/doctors",verifyToken, async (req, res) => {
       message: "Doctor profile created successfully",
       data: result,
     });
+
   } catch (error) {
     res.status(500).send({
       success: false,
-      message: "Failed to create doctor profile",
-      error: error.message,
+      message: error.message,
     });
   }
 });
